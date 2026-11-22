@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File to Markdown</title>
+<style>
+  :root {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --ink: #1b2530;
+    --muted: #5d6b7a;
+    --line: #c9d2db;
+    --accent: #0b5d8f;
+    --accent-ink: #ffffff;
+    --good: #12704a;
+    --bad: #b3261e;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12181f;
+      --surface: #1a222b;
+      --ink: #e6ebf0;
+      --muted: #93a1b0;
+      --line: #2e3a47;
+      --accent: #5db4e8;
+      --accent-ink: #0b1620;
+      --good: #5fd3a0;
+      --bad: #f2877f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); margin: 0 0 32px; max-width: 60ch; }
+
+  .drop {
+    display: block;
+    border: 2px dashed var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    padding: 40px 24px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); }
+  .drop.over { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+  .drop strong { display: block; font-size: 1.1rem; margin-bottom: 4px; }
+  .drop span { color: var(--muted); font-size: .95rem; }
+  .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+
+  .status { margin: 16px 0 0; min-height: 1.5em; color: var(--muted); }
+  .status.error { color: var(--bad); }
+
+  #result { display: none; margin-top: 24px; }
+  #result.show { display: block; }
+
+  .bar {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 12px 24px; margin-bottom: 12px;
+  }
+  .stats { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; padding: 0; list-style: none; }
+  .stats li { color: var(--muted); font-size: .95rem; }
+  .stats b { color: var(--ink); font-family: var(--mono); font-weight: 600; }
+  .stats .tokens b { color: var(--good); font-size: 1.25rem; }
+
+  .actions { display: flex; gap: 8px; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    padding: 9px 16px; border-radius: 5px;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:hover { filter: brightness(1.08); }
+  button:focus-visible, .drop:focus-within { outline: 3px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 2px; }
+
+  textarea {
+    width: 100%; height: 420px; resize: vertical;
+    font-family: var(--mono); font-size: .88rem; line-height: 1.55;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: 16px;
+  }
+  .note { color: var(--muted); font-size: .85rem; margin-top: 32px; max-width: 70ch; }
+
+  @media (prefers-reduced-motion: reduce) { .drop { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Turn documents into Markdown</h1>
+  <p class="lede">Upload a PDF, Word, Excel or PowerPoint file. Get clean Markdown that costs far fewer tokens to paste into an AI chat or agent.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept=".pdf,.docx,.pptx,.xlsx,.xls,.csv,.html,.htm,.json,.xml,.epub,.txt,.zip">
+    <strong>Drop a file here, or click to choose one</strong>
+    <span>PDF, DOCX, PPTX, XLSX, CSV, HTML, JSON, XML, EPUB. Up to 20 MB.</span>
+  </label>
+
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+
+  <section id="result" aria-label="Converted Markdown">
+    <div class="bar">
+      <ul class="stats">
+        <li class="tokens"><b id="sTokens">0</b> tokens</li>
+        <li><b id="sChars">0</b> characters</li>
+        <li>from <b id="sSize">0</b> file</li>
+      </ul>
+      <div class="actions">
+        <button type="button" id="copy">Copy Markdown</button>
+        <button type="button" id="download" class="secondary">Download .md</button>
+      </div>
+    </div>
+    <textarea id="out" spellcheck="false" aria-label="Markdown output"></textarea>
+  </section>
+
+  <p class="note">Your file is converted in memory and deleted right away. Token counts use the cl100k tokenizer, so other models will differ a little.</p>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const drop = $("drop"), input = $("file"), statusEl = $("status");
+  const result = $("result"), out = $("out");
+  let currentName = "converted.md";
+
+  const fmt = (n) => n.toLocaleString("en-US");
+  const fmtSize = (b) =>
+    b < 1024 ? b + " B" : b < 1048576 ? (b / 1024).toFixed(1) + " KB" : (b / 1048576).toFixed(1) + " MB";
+
+  function setStatus(msg, isError = false) {
+    statusEl.textContent = msg;
+    statusEl.classList.toggle("error", isError);
+  }
+
+  async function convert(file) {
+    if (!file) return;
+    result.classList.remove("show");
+    setStatus("Converting " + file.name + "…");
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const res = await fetch("/convert", { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Conversion failed.");
+      out.value = data.markdown;
+      currentName = data.filename;
+      $("sTokens").textContent = fmt(data.tokens);
+      $("sChars").textContent = fmt(data.chars);
+      $("sSize").textContent = fmtSize(data.source_bytes);
+      result.classList.add("show");
+      setStatus("Done. " + file.name + " is ready below.");
+    } catch (err) {
+      setStatus(err.message, true);
+    }
+  }
+
+  input.addEventListener("change", () => convert(input.files[0]));
+
+  ["dragenter", "dragover"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => convert(e.dataTransfer.files[0]));
+
+  $("copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(out.value);
+    } catch {
+      out.select();
+      document.execCommand("copy");
+    }
+    setStatus("Copied to clipboard.");
+  });
+
+  $("download").addEventListener("click", () => {
+    const blob = new Blob([out.value], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = currentName;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+</script>
+</body>
+</html>
